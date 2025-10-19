@@ -22,6 +22,10 @@ class ProCyclingAlertBot:
     def __init__(self):
         logger.info("ProCyclingAlertBot initialized")
     
+    def clean_message(self, message):
+        """Limpia el mensaje eliminando los símbolos < y >"""
+        return message.replace('<', '').replace('>', '')
+    
     def send_telegram(self, message):
         """Envía un mensaje a Telegram usando requests"""
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -29,11 +33,14 @@ class ProCyclingAlertBot:
             return False
         
         try:
+            # Limpiar el mensaje antes de enviarlo
+            cleaned_message = self.clean_message(message)
+            
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = {
                 'chat_id': TELEGRAM_CHAT_ID,
-                'text': message,
-                'parse_mode': 'HTML'
+                'text': cleaned_message,
+                'parse_mode': 'Markdown'
             }
             response = requests.post(url, json=payload)
             print(response.text)
