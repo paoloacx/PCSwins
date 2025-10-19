@@ -34,66 +34,86 @@ class ProCyclingAlertBot:
             return False
         
         try:
-            # Limpiar el mensaje antes de enviarlo
             cleaned_message = self.clean_message(message)
-            
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = {
                 'chat_id': TELEGRAM_CHAT_ID,
                 'text': cleaned_message,
-                'parse_mode': 'Markdown'
+                'parse_mode': 'HTML'
             }
-            response = requests.post(url, json=payload)
-            print(response.text)
-            response.raise_for_status()
-            logger.info("Mensaje enviado a Telegram exitosamente")
-            return True
-        except requests.RequestException as e:
-            logger.error(f"Error al enviar mensaje a Telegram: {e}")
+            response = requests.post(url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                logger.info("Mensaje enviado exitosamente a Telegram")
+                return True
+            else:
+                logger.error(f"Error al enviar mensaje: {response.status_code} - {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error enviando mensaje a Telegram: {e}")
             return False
     
     def scrape_today_winners(self):
-        """Scrapea los ganadores de hoy desde ProCyclingStats homepage"""
+        """Extrae los ganadores del día desde la home de ProCyclingStats"""
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-            response = requests.get(PROCYCLING_URL, headers=headers)
+            response = requests.get(PROCYCLING_URL, headers=headers, timeout=10)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
-            
             today_winners = []
             
-            # Buscar el bloque "Results today" en la homepage
-            results_today_section = soup.find('div', class_='home')
-            if not results_today_section:
-                logger.warning("No se encontró la sección 'Results today'")
+            # Buscar el bloque con el texto "Results today"
+            results_today_header = None
+            for header in soup.find_all(['h3', 'h2', 'h4']):
+                if 'Results today' in header.get_text():
+                    results_today_header = header
+                    break
+            
+            if not results_today_header:
+                logger.warning("No se encontró el bloque 'Results today'")
                 return None
             
-            # Buscar todas las filas de resultados dentro de la sección
-            result_rows = results_today_section.find_all('li')
+            logger.info("Bloque 'Results today' encontrado")
             
-            for row in result_rows:
-                try:
-                    # Extraer nombre del ganador
-                    winner_link = row.find('a', href=lambda x: x and '/rider/' in x)
-                    if not winner_link:
-                        continue
-                    winner_name = winner_link.get_text(strip=True)
-                    
-                    # Extraer nombre de la carrera
-                    race_link = row.find('a', href=lambda x: x and '/race/' in x)
-                    race_name = race_link.get_text(strip=True) if race_link else 'Desconocida'
-                    
-                    today_winners.append({
-                        'race': race_name,
-                        'winner': winner_name
-                    })
-                except (ValueError, AttributeError) as e:
-                    logger.debug(f"Error procesando fila: {e}")
-                    continue
+            # Recorrer los elementos hijos hasta encontrar el siguiente encabezado
+            current_element = results_today_header.find_next_sibling()
             
+            while current_element:
+                # Si encontramos otro encabezado, terminamos
+                if current_element.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                    break
+                
+                # Buscar elementos li o div que contengan información de ganadores
+                items = []
+                if current_element.name == 'ul':
+                    items = current_element.find_all('li')
+                elif current_element.name == 'div':
+                    items = current_element.find_all(['li', 'div'], recursive=True)
+                else:
+                    items = [current_element] if current_element.name in ['li', 'div'] else []
+                
+                for item in items:
+                    # Buscar enlaces de ciclistas (ganadores)
+                    winner_link = item.find('a', href=lambda x: x and '/rider/' in x)
+                    race_link = item.find('a', href=lambda x: x and '/race/' in x)
+                    
+                    if winner_link:
+                        winner_name = winner_link.get_text(strip=True)
+                        race_name = race_link.get_text(strip=True) if race_link else 'Desconocida'
+                        
+                        today_winners.append({
+                            'race': race_name,
+                            'winner': winner_name
+                        })
+                        logger.info(f"Ganador encontrado: {winner_name} - {race_name}")
+                
+                current_element = current_element.find_next_sibling()
+            
+            # Solo retornar mensaje si hay ganadores
             if today_winners:
                 result = "🏆 Ganadores de hoy:\n\n"
                 for winner in today_winners:
