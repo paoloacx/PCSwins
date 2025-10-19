@@ -36,6 +36,7 @@ class ProCyclingAlertBot:
                 'parse_mode': 'HTML'
             }
             response = requests.post(url, json=payload)
+            print(response.text)
             response.raise_for_status()
             logger.info("Mensaje enviado a Telegram exitosamente")
             return True
@@ -96,9 +97,9 @@ class ProCyclingAlertBot:
         stages_info = self.get_today_stages()
         
         # Construir mensaje completo
-        message = f"<b>🚴 ProCycling Alert Bot</b>\n\n"
-        message += f"<b>Último ganador:</b>\n{winner_info}\n\n"
-        message += f"<b>Etapas de hoy:</b>\n{stages_info}"
+        message = f"🚴 ProCycling Alert Bot\n\n"
+        message += f"Último ganador:\n{winner_info}\n\n"
+        message += f"Etapas de hoy:\n{stages_info}"
         
         # Mostrar en logs
         logger.info(winner_info)
