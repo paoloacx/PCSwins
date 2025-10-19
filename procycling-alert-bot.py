@@ -13,10 +13,35 @@ logger = logging.getLogger(__name__)
 # URL de la API de ProCyclingStats o fuente de datos
 PROCYCLING_API_URL = "https://api.procyclingstats.com/v1/stages"
 
+# Configuración de Telegram
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
+
 class ProCyclingAlertBot:
     
     def __init__(self):
         logger.info("ProCyclingAlertBot initialized")
+    
+    def send_telegram(self, message):
+        """Envía un mensaje a Telegram usando requests"""
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            logger.error("Telegram token o chat ID no configurados")
+            return False
+        
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            payload = {
+                'chat_id': TELEGRAM_CHAT_ID,
+                'text': message,
+                'parse_mode': 'HTML'
+            }
+            response = requests.post(url, json=payload)
+            response.raise_for_status()
+            logger.info("Mensaje enviado a Telegram exitosamente")
+            return True
+        except requests.RequestException as e:
+            logger.error(f"Error al enviar mensaje a Telegram: {e}")
+            return False
     
     def get_latest_winner(self):
         """Obtiene el último ganador de ProCyclingStats"""
@@ -63,10 +88,24 @@ class ProCyclingAlertBot:
             return f"Error al obtener etapas: {e}"
     
     def run(self):
-        """Ejecuta el bot con requests"""
+        """Ejecuta el bot con requests y envía resultados por Telegram"""
         logger.info("Bot ejecutándose con requests")
-        logger.info(self.get_latest_winner())
-        logger.info(self.get_today_stages())
+        
+        # Obtener información
+        winner_info = self.get_latest_winner()
+        stages_info = self.get_today_stages()
+        
+        # Construir mensaje completo
+        message = f"<b>🚴 ProCycling Alert Bot</b>\n\n"
+        message += f"<b>Último ganador:</b>\n{winner_info}\n\n"
+        message += f"<b>Etapas de hoy:</b>\n{stages_info}"
+        
+        # Mostrar en logs
+        logger.info(winner_info)
+        logger.info(stages_info)
+        
+        # Enviar siempre por Telegram, tanto si hay ganadores como si no
+        self.send_telegram(message)
 
 if __name__ == '__main__':
     bot = ProCyclingAlertBot()
