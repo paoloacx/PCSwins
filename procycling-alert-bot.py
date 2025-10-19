@@ -1,5 +1,6 @@
 import os
 import requests
+from bs4 import BeautifulSoup
 import logging
 from datetime import datetime
 
@@ -10,8 +11,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# URL de la API de ProCyclingStats o fuente de datos
-PROCYCLING_API_URL = "https://api.procyclingstats.com/v1/stages"
+# URL de ProCyclingStats
+PROCYCLING_URL = "https://www.procyclingstats.com/calendar/uci/latest-results"
 
 # Configuración de Telegram
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
@@ -51,68 +52,81 @@ class ProCyclingAlertBot:
             logger.error(f"Error al enviar mensaje a Telegram: {e}")
             return False
     
-    def get_latest_winner(self):
-        """Obtiene el último ganador de ProCyclingStats"""
+    def scrape_today_winners(self):
+        """Scrapea los ganadores de hoy desde ProCyclingStats"""
         try:
-            response = requests.get(PROCYCLING_API_URL)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(PROCYCLING_URL, headers=headers)
             response.raise_for_status()
-            data = response.json()
             
-            if data and len(data) > 0:
-                latest_stage = data[0]
-                winner = latest_stage.get('winner', 'Desconocido')
-                stage_name = latest_stage.get('name', 'Etapa desconocida')
-                return f"Último ganador: {winner} en {stage_name}"
-            else:
-                return "No hay datos disponibles"
-        except requests.RequestException as e:
-            logger.error(f"Error al obtener datos: {e}")
-            return f"Error al obtener datos: {e}"
-    
-    def get_today_stages(self):
-        """Obtiene las etapas de hoy"""
-        try:
-            response = requests.get(PROCYCLING_API_URL)
-            response.raise_for_status()
-            data = response.json()
+            soup = BeautifulSoup(response.content, 'html.parser')
             
             today = datetime.now().date()
-            today_stages = []
+            today_winners = []
             
-            for stage in data:
-                stage_date = datetime.strptime(stage.get('date', ''), '%Y-%m-%d').date()
-                if stage_date == today:
-                    today_stages.append(stage)
+            # Buscar las filas de resultados
+            rows = soup.find_all('tr')
             
-            if today_stages:
-                result = "Etapas de hoy:\n"
-                for stage in today_stages:
-                    result += f"- {stage.get('name', 'Desconocido')}\n"
+            for row in rows:
+                # Buscar fecha en la fila
+                date_cell = row.find('td', class_='date')
+                if date_cell:
+                    try:
+                        date_text = date_cell.get_text(strip=True)
+                        # Parsear la fecha (formato puede variar)
+                        row_date = datetime.strptime(date_text, '%d.%m.%Y').date()
+                        
+                        if row_date == today:
+                            # Extraer nombre de la carrera
+                            race_cell = row.find('td', class_='name')
+                            race_name = race_cell.get_text(strip=True) if race_cell else 'Desconocida'
+                            
+                            # Extraer nombre del ganador
+                            winner_cell = row.find('td', class_='rider')
+                            if not winner_cell:
+                                winner_cell = row.find('a', href=lambda x: x and '/rider/' in x)
+                            winner_name = winner_cell.get_text(strip=True) if winner_cell else 'Desconocido'
+                            
+                            today_winners.append({
+                                'race': race_name,
+                                'winner': winner_name
+                            })
+                    except (ValueError, AttributeError) as e:
+                        logger.debug(f"Error procesando fila: {e}")
+                        continue
+            
+            if today_winners:
+                result = "🏆 Ganadores de hoy:\n\n"
+                for winner in today_winners:
+                    result += f"🚴 {winner['winner']}\n"
+                    result += f"📍 {winner['race']}\n\n"
                 return result
             else:
-                return "No hay etapas programadas para hoy"
+                return "No hay ganadores registrados para hoy"
+        
         except requests.RequestException as e:
-            logger.error(f"Error al obtener etapas: {e}")
-            return f"Error al obtener etapas: {e}"
+            logger.error(f"Error al obtener datos de ProCyclingStats: {e}")
+            return f"Error al obtener datos: {e}"
+        except Exception as e:
+            logger.error(f"Error inesperado: {e}")
+            return f"Error inesperado: {e}"
     
     def run(self):
-        """Ejecuta el bot con requests y envía resultados por Telegram"""
-        logger.info("Bot ejecutándose con requests")
+        """Ejecuta el bot y envía resultados por Telegram"""
+        logger.info("Bot ejecutándose con BeautifulSoup y requests")
         
-        # Obtener información
-        winner_info = self.get_latest_winner()
-        stages_info = self.get_today_stages()
+        # Obtener ganadores de hoy
+        winners_info = self.scrape_today_winners()
         
         # Construir mensaje completo
-        message = f"🚴 ProCycling Alert Bot\n\n"
-        message += f"Último ganador:\n{winner_info}\n\n"
-        message += f"Etapas de hoy:\n{stages_info}"
+        message = f"🚴 ProCycling Alert Bot\n\n{winners_info}"
         
         # Mostrar en logs
-        logger.info(winner_info)
-        logger.info(stages_info)
+        logger.info(winners_info)
         
-        # Enviar siempre por Telegram, tanto si hay ganadores como si no
+        # Enviar por Telegram
         self.send_telegram(message)
 
 if __name__ == '__main__':
