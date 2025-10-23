@@ -2,7 +2,6 @@ import os
 import requests
 from bs4 import BeautifulSoup
 import logging
-from datetime import datetime
 
 # Configuración del logging
 logging.basicConfig(
@@ -38,8 +37,7 @@ class ProCyclingAlertBot:
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = {
                 'chat_id': TELEGRAM_CHAT_ID,
-                'text': cleaned_message,
-                'parse_mode': 'HTML'
+                'text': cleaned_message
             }
             response = requests.post(url, json=payload, timeout=10)
             
