@@ -22,6 +22,16 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 # Archivo para evitar duplicados
 CACHE_FILE = '/tmp/procycling_sent_results.json'
 
+# Headers para evitar bloqueos
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1'
+}
+
 class ProCyclingAlertBot:
 
     def __init__(self):
@@ -86,7 +96,7 @@ class ProCyclingAlertBot:
         """Extrae el podio (top 3) y ubicación de una carrera específica"""
         try:
             logger.info(f"Scrapeando podio de: {race_url}")
-            response = requests.get(race_url, timeout=10)
+            response = requests.get(race_url, headers=HEADERS, timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -145,7 +155,7 @@ class ProCyclingAlertBot:
     def scrape_today_winners(self):
         """Extrae las carreras del día con sus podios completos desde ProCyclingStats"""
         try:
-            response = requests.get(PROCYCLING_URL, timeout=10)
+            response = requests.get(PROCYCLING_URL, headers=HEADERS, timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
 
