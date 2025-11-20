@@ -2,6 +2,8 @@ import os
 import requests
 from bs4 import BeautifulSoup
 import logging
+import json
+import hashlib
 
 # Configuración del logging
 logging.basicConfig(
@@ -17,11 +19,39 @@ PROCYCLING_URL = "https://www.procyclingstats.com"
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 
+# Archivo para evitar duplicados
+CACHE_FILE = '/tmp/procycling_sent_results.json'
+
 class ProCyclingAlertBot:
-    
+
     def __init__(self):
         logger.info("ProCyclingAlertBot initialized")
-    
+        self.sent_results = self.load_sent_results()
+
+    def load_sent_results(self):
+        """Carga los resultados ya enviados desde el archivo de caché"""
+        try:
+            if os.path.exists(CACHE_FILE):
+                with open(CACHE_FILE, 'r') as f:
+                    return set(json.load(f))
+            return set()
+        except Exception as e:
+            logger.warning(f"No se pudo cargar el caché: {e}")
+            return set()
+
+    def save_sent_results(self):
+        """Guarda los resultados enviados en el archivo de caché"""
+        try:
+            with open(CACHE_FILE, 'w') as f:
+                json.dump(list(self.sent_results), f)
+        except Exception as e:
+            logger.error(f"No se pudo guardar el caché: {e}")
+
+    def generate_result_hash(self, race, winner):
+        """Genera un hash único para un resultado de carrera"""
+        result_str = f"{race}:{winner}"
+        return hashlib.md5(result_str.encode()).hexdigest()
+
     def clean_message(self, message):
         """Limpia el mensaje eliminando los símbolos < y >"""
         return message.replace('<', '').replace('>', '')
@@ -65,7 +95,7 @@ class ProCyclingAlertBot:
             
             if not results_header:
                 logger.info("No se encontró el encabezado 'Results today'")
-                return None
+                return None, []
             
             logger.info("Encabezado 'Results today' encontrado")
             
@@ -81,61 +111,77 @@ class ProCyclingAlertBot:
                 # Buscar enlaces dentro del elemento actual
                 if current_element.name == 'ul':
                     list_items = current_element.find_all('li')
-                    
+
                     for item in list_items:
-                        # Buscar el enlace del ganador (primer <a> con clase específica)
-                        winner_link = item.find('a', href=True)
-                        # Buscar el enlace de la carrera (puede estar en otro <a>)
-                        race_link = item.find_all('a')[1] if len(item.find_all('a')) > 1 else None
-                        
-                        if winner_link:
+                        all_links = item.find_all('a', href=True)
+
+                        # Necesitamos al menos 2 enlaces: carrera y ganador
+                        if len(all_links) >= 2:
+                            # El PRIMER enlace es la CARRERA
+                            race_link = all_links[0]
+                            # El SEGUNDO enlace es el GANADOR
+                            winner_link = all_links[1]
+
+                            race_name = race_link.get_text(strip=True)
                             winner_name = winner_link.get_text(strip=True)
-                            race_name = race_link.get_text(strip=True) if race_link else 'Desconocida'
-                            
-                            today_winners.append({
-                                'race': race_name,
-                                'winner': winner_name
-                            })
-                            logger.info(f"Ganador encontrado: {winner_name} - {race_name}")
+
+                            # Solo agregar si ambos tienen contenido
+                            if race_name and winner_name:
+                                result_hash = self.generate_result_hash(race_name, winner_name)
+
+                                # Solo agregar si no se ha enviado antes
+                                if result_hash not in self.sent_results:
+                                    today_winners.append({
+                                        'race': race_name,
+                                        'winner': winner_name,
+                                        'hash': result_hash
+                                    })
+                                    logger.info(f"Ganador encontrado: {winner_name} - {race_name}")
+                                else:
+                                    logger.info(f"Resultado ya enviado (omitido): {winner_name} - {race_name}")
                 
                 current_element = current_element.find_next_sibling()
             
-            # Solo retornar mensaje si hay ganadores
+            # Solo retornar mensaje si hay ganadores nuevos
             if today_winners:
-                result = "🏆 Ganadores de hoy:\n\n"
+                result = "🏆 Resultados de hoy:\n\n"
                 for winner in today_winners:
                     result += f"🚴 {winner['winner']}\n"
-                    result += f"📍 {winner['race']}\n\n"
-                return result
+                    result += f"   {winner['race']}\n\n"
+                return result, today_winners
             else:
-                # Si no hay ganadores, retornar None para no enviar mensaje
-                logger.info("No hay ganadores registrados para hoy")
-                return None
+                # Si no hay ganadores nuevos, retornar None
+                logger.info("No hay ganadores nuevos para enviar")
+                return None, []
         
         except requests.RequestException as e:
             logger.error(f"Error al obtener datos de ProCyclingStats: {e}")
-            return None
+            return None, []
         except Exception as e:
             logger.error(f"Error inesperado: {e}")
-            return None
+            return None, []
     
     def run(self):
-        """Ejecuta el bot y envía resultados por Telegram solo si hay ganadores"""
+        """Ejecuta el bot y envía resultados por Telegram solo si hay ganadores nuevos"""
         logger.info("Bot ejecutándose con BeautifulSoup y requests")
-        
+
         # Obtener ganadores de hoy
-        winners_info = self.scrape_today_winners()
-        
-        # Solo enviar mensaje si hay ganadores
-        if winners_info:
-            # Construir mensaje completo
-            message = f"🚴 ProCycling Alert Bot\n\n{winners_info}"
-            
+        winners_info, winners_list = self.scrape_today_winners()
+
+        # Solo enviar mensaje si hay ganadores nuevos
+        if winners_info and winners_list:
             # Mostrar en logs
             logger.info(winners_info)
-            
+
             # Enviar por Telegram
-            self.send_telegram(message)
+            if self.send_telegram(winners_info):
+                # Marcar resultados como enviados
+                for winner in winners_list:
+                    self.sent_results.add(winner['hash'])
+
+                # Guardar el caché actualizado
+                self.save_sent_results()
+                logger.info(f"{len(winners_list)} nuevo(s) resultado(s) enviado(s) y guardado(s) en caché")
         else:
             logger.info("No se envió mensaje porque no hay ganadores nuevos")
 
