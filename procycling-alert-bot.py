@@ -2,7 +2,8 @@ import os
 import requests
 from bs4 import BeautifulSoup
 import logging
-from datetime import datetime
+import json
+import hashlib
 
 # Configuración del logging
 logging.basicConfig(
@@ -18,11 +19,49 @@ PROCYCLING_URL = "https://www.procyclingstats.com"
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 
+# Archivo para evitar duplicados
+CACHE_FILE = '/tmp/procycling_sent_results.json'
+
+# Headers para evitar bloqueos
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1'
+}
+
 class ProCyclingAlertBot:
-    
+
     def __init__(self):
         logger.info("ProCyclingAlertBot initialized")
-    
+        self.sent_results = self.load_sent_results()
+
+    def load_sent_results(self):
+        """Carga los resultados ya enviados desde el archivo de caché"""
+        try:
+            if os.path.exists(CACHE_FILE):
+                with open(CACHE_FILE, 'r') as f:
+                    return set(json.load(f))
+            return set()
+        except Exception as e:
+            logger.warning(f"No se pudo cargar el caché: {e}")
+            return set()
+
+    def save_sent_results(self):
+        """Guarda los resultados enviados en el archivo de caché"""
+        try:
+            with open(CACHE_FILE, 'w') as f:
+                json.dump(list(self.sent_results), f)
+        except Exception as e:
+            logger.error(f"No se pudo guardar el caché: {e}")
+
+    def generate_result_hash(self, race, winner):
+        """Genera un hash único para un resultado de carrera"""
+        result_str = f"{race}:{winner}"
+        return hashlib.md5(result_str.encode()).hexdigest()
+
     def clean_message(self, message):
         """Limpia el mensaje eliminando los símbolos < y >"""
         return message.replace('<', '').replace('>', '')
@@ -32,17 +71,17 @@ class ProCyclingAlertBot:
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
             logger.error("Telegram token o chat ID no configurados")
             return False
-        
+
         try:
             cleaned_message = self.clean_message(message)
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = {
                 'chat_id': TELEGRAM_CHAT_ID,
                 'text': cleaned_message,
-                'parse_mode': 'HTML'
+                'parse_mode': 'Markdown'
             }
             response = requests.post(url, json=payload, timeout=10)
-            
+
             if response.status_code == 200:
                 logger.info("Mensaje enviado exitosamente a Telegram")
                 return True
@@ -52,94 +91,192 @@ class ProCyclingAlertBot:
         except Exception as e:
             logger.error(f"Error al enviar mensaje a Telegram: {e}")
             return False
-    
-    def scrape_today_winners(self):
-        """Extrae los ganadores del día desde ProCyclingStats con lógica robusta"""
+
+    def scrape_race_podium(self, race_url):
+        """Extrae el podio (top 3) y ubicación de una carrera específica"""
         try:
-            response = requests.get(PROCYCLING_URL, timeout=10)
+            logger.info(f"Scrapeando podio de: {race_url}")
+            response = requests.get(race_url, headers=HEADERS, timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
-            
-            today_winners = []
-            
+
+            podium = []
+            location = ""
+
+            # Buscar la ubicación de la carrera
+            # Intentar encontrar el elemento que contiene la ubicación
+            location_elem = soup.find('span', class_='flag')
+            if location_elem and location_elem.parent:
+                location = location_elem.parent.get_text(strip=True)
+
+            # Si no se encuentra, buscar en otros lugares comunes
+            if not location:
+                infolist = soup.find('ul', class_='infolist')
+                if infolist:
+                    for li in infolist.find_all('li'):
+                        text = li.get_text(strip=True)
+                        if '-' in text and 'km' in text.lower():
+                            location = text
+                            break
+
+            # Buscar la tabla de resultados
+            results_table = soup.find('table', class_='results')
+            if not results_table:
+                # Intentar otras variantes
+                results_table = soup.find('tbody')
+
+            if results_table:
+                rows = results_table.find_all('tr')[:3]  # Top 3
+
+                for idx, row in enumerate(rows, 1):
+                    cols = row.find_all('td')
+                    if len(cols) >= 2:
+                        # Buscar el nombre del ciclista
+                        rider_link = row.find('a', href=lambda x: x and '/rider/' in x)
+                        rider_name = rider_link.get_text(strip=True) if rider_link else ""
+
+                        # Buscar el tiempo (usualmente en la última columna)
+                        time_col = cols[-1].get_text(strip=True)
+
+                        if rider_name:
+                            podium.append({
+                                'position': idx,
+                                'rider': rider_name,
+                                'time': time_col if time_col else "-"
+                            })
+                            logger.info(f"Podio {idx}º: {rider_name} - {time_col}")
+
+            return location, podium
+
+        except Exception as e:
+            logger.error(f"Error al scrapear podio de {race_url}: {e}")
+            return "", []
+
+    def scrape_today_winners(self):
+        """Extrae las carreras del día con sus podios completos desde ProCyclingStats"""
+        try:
+            response = requests.get(PROCYCLING_URL, headers=HEADERS, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.content, 'html.parser')
+
+            today_races = []
+
             # Buscar el encabezado 'Results today'
             results_header = soup.find('h3', string='Results today')
-            
+
             if not results_header:
                 logger.info("No se encontró el encabezado 'Results today'")
-                return None
-            
+                return None, []
+
             logger.info("Encabezado 'Results today' encontrado")
-            
+
             # Buscar el elemento ul que sigue al encabezado
             current_element = results_header.find_next_sibling()
-            
-            # Extraer todos los ganadores hasta encontrar el siguiente encabezado o fin de sección
+
+            # Extraer todas las carreras hasta encontrar el siguiente encabezado o fin de sección
             while current_element:
                 # Si encontramos otro encabezado h3, terminamos
                 if current_element.name == 'h3':
                     break
-                
+
                 # Buscar enlaces dentro del elemento actual
                 if current_element.name == 'ul':
                     list_items = current_element.find_all('li')
-                    
+
                     for item in list_items:
-                        # Buscar el enlace del ganador (primer <a> con clase específica)
-                        winner_link = item.find('a', href=True)
-                        # Buscar el enlace de la carrera (puede estar en otro <a>)
-                        race_link = item.find_all('a')[1] if len(item.find_all('a')) > 1 else None
-                        
-                        if winner_link:
-                            winner_name = winner_link.get_text(strip=True)
-                            race_name = race_link.get_text(strip=True) if race_link else 'Desconocida'
-                            
-                            today_winners.append({
-                                'race': race_name,
-                                'winner': winner_name
-                            })
-                            logger.info(f"Ganador encontrado: {winner_name} - {race_name}")
-                
+                        all_links = item.find_all('a', href=True)
+
+                        # Necesitamos al menos 1 enlace: la carrera
+                        if len(all_links) >= 1:
+                            # El PRIMER enlace es la CARRERA
+                            race_link = all_links[0]
+                            race_name = race_link.get_text(strip=True)
+                            race_url = race_link['href']
+
+                            # Asegurar URL completa
+                            if not race_url.startswith('http'):
+                                race_url = PROCYCLING_URL + race_url
+
+                            # Solo agregar si tiene contenido
+                            if race_name and race_url:
+                                result_hash = self.generate_result_hash(race_name, "podium")
+
+                                # Solo agregar si no se ha enviado antes
+                                if result_hash not in self.sent_results:
+                                    # Obtener el podio de esta carrera
+                                    location, podium = self.scrape_race_podium(race_url)
+
+                                    if podium:  # Solo agregar si tiene podio
+                                        today_races.append({
+                                            'race': race_name,
+                                            'location': location,
+                                            'podium': podium,
+                                            'hash': result_hash
+                                        })
+                                        logger.info(f"Carrera encontrada: {race_name} con {len(podium)} posiciones")
+                                else:
+                                    logger.info(f"Carrera ya enviada (omitida): {race_name}")
+
                 current_element = current_element.find_next_sibling()
-            
-            # Solo retornar mensaje si hay ganadores
-            if today_winners:
-                result = "🏆 Ganadores de hoy:\n\n"
-                for winner in today_winners:
-                    result += f"🚴 {winner['winner']}\n"
-                    result += f"📍 {winner['race']}\n\n"
-                return result
+
+            # Solo retornar mensaje si hay carreras nuevas
+            if today_races:
+                result = "· ProCycling Alert Bot ·\n\n"
+
+                for race in today_races:
+                    # Nombre de la carrera en BOLD
+                    result += f"*{race['race']}*\n"
+
+                    # Ubicación
+                    if race['location']:
+                        result += f"📍 {race['location']}\n"
+
+                    # Podio
+                    result += f"\nPodio:\n\n"
+
+                    for rider in race['podium']:
+                        position_emoji = f"{rider['position']}º"
+                        result += f"{position_emoji} - {rider['rider']}		{rider['time']}\n"
+
+                    result += "\n"
+
+                return result, today_races
             else:
-                # Si no hay ganadores, retornar None para no enviar mensaje
-                logger.info("No hay ganadores registrados para hoy")
-                return None
-        
+                # Si no hay carreras nuevas, retornar None
+                logger.info("No hay carreras nuevas para enviar")
+                return None, []
+
         except requests.RequestException as e:
             logger.error(f"Error al obtener datos de ProCyclingStats: {e}")
-            return None
+            return None, []
         except Exception as e:
             logger.error(f"Error inesperado: {e}")
-            return None
+            return None, []
     
     def run(self):
-        """Ejecuta el bot y envía resultados por Telegram solo si hay ganadores"""
-        logger.info("Bot ejecutándose con BeautifulSoup y requests")
-        
-        # Obtener ganadores de hoy
-        winners_info = self.scrape_today_winners()
-        
-        # Solo enviar mensaje si hay ganadores
-        if winners_info:
-            # Construir mensaje completo
-            message = f"🚴 ProCycling Alert Bot\n\n{winners_info}"
-            
+        """Ejecuta el bot y envía resultados por Telegram solo si hay carreras nuevas"""
+        logger.info("Bot ejecutándose - buscando carreras del día")
+
+        # Obtener carreras de hoy con sus podios
+        races_info, races_list = self.scrape_today_winners()
+
+        # Solo enviar mensaje si hay carreras nuevas
+        if races_info and races_list:
             # Mostrar en logs
-            logger.info(winners_info)
-            
+            logger.info(f"Encontradas {len(races_list)} carrera(s) nueva(s)")
+            logger.info(races_info)
+
             # Enviar por Telegram
-            self.send_telegram(message)
+            if self.send_telegram(races_info):
+                # Marcar resultados como enviados
+                for race in races_list:
+                    self.sent_results.add(race['hash'])
+
+                # Guardar el caché actualizado
+                self.save_sent_results()
+                logger.info(f"{len(races_list)} nueva(s) carrera(s) enviada(s) y guardada(s) en caché")
         else:
-            logger.info("No se envió mensaje porque no hay ganadores nuevos")
+            logger.info("No se envió mensaje porque no hay carreras nuevas")
 
 if __name__ == '__main__':
     bot = ProCyclingAlertBot()
