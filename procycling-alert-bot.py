@@ -204,55 +204,37 @@ class ProCyclingAlertBot:
 
                     for item in list_items:
                         all_links = item.find_all('a', href=True)
-                        logger.info(f"  LI tiene {len(all_links)} enlaces: {[a.get_text(strip=True)[:30] for a in all_links[:3]]}")
+                        logger.info(f"  LI tiene {len(all_links)} enlaces: {[a.get_text(strip=True)[:30] for a in all_links[:4]]}")
 
                         races_checked += 1
-                        # Buscar el primer enlace con texto (ignorar enlaces vacíos como iconos)
-                        race_link = None
-                        race_name = ""
-                        race_url = ""
 
+                        # Extraer enlaces con texto (ignorar vacíos como iconos/banderas)
+                        links_with_text = []
                         for link in all_links:
                             text = link.get_text(strip=True)
-                            if text:  # Primer enlace con texto no vacío
-                                race_link = link
-                                race_name = text
-                                race_url = link.get('href', '')
-                                break
+                            if text:
+                                links_with_text.append({'text': text, 'href': link.get('href', '')})
 
-                        if race_link and race_name:
+                        # Necesitamos al menos 2 enlaces: carrera y ganador
+                        if len(links_with_text) >= 2:
+                            race_name = links_with_text[0]['text']  # Primer enlace = carrera
+                            winner_name = links_with_text[1]['text']  # Segundo enlace = ganador
 
-                            # Asegurar URL completa
-                            if not race_url.startswith('http'):
-                                # Agregar / si no empieza con /
-                                if not race_url.startswith('/'):
-                                    race_url = '/' + race_url
-                                race_url = PROCYCLING_URL + race_url
+                            logger.info(f"  -> Carrera: {race_name}, Ganador: {winner_name}")
 
-                            # Solo agregar si tiene contenido
-                            if race_name and race_url:
-                                result_hash = self.generate_result_hash(race_name, "podium")
+                            # Generar hash único para esta combinación
+                            result_hash = self.generate_result_hash(race_name, winner_name)
 
-                                # Solo agregar si no se ha enviado antes
-                                if result_hash not in self.sent_results:
-                                    # Pequeño delay para no sobrecargar el servidor
-                                    time.sleep(1)
-
-                                    # Obtener el podio de esta carrera
-                                    location, podium = self.scrape_race_podium(race_url)
-
-                                    if podium:  # Solo agregar si tiene podio
-                                        today_races.append({
-                                            'race': race_name,
-                                            'location': location,
-                                            'podium': podium,
-                                            'hash': result_hash
-                                        })
-                                        logger.info(f"Carrera encontrada: {race_name} con {len(podium)} posiciones")
-                                    else:
-                                        logger.warning(f"No se pudo obtener podio para: {race_name}")
-                                else:
-                                    logger.info(f"Carrera ya enviada (omitida): {race_name}")
+                            # Solo agregar si no se ha enviado antes
+                            if result_hash not in self.sent_results:
+                                today_races.append({
+                                    'race': race_name,
+                                    'winner': winner_name,
+                                    'hash': result_hash
+                                })
+                                logger.info(f"✅ Carrera agregada: {race_name} - Ganador: {winner_name}")
+                            else:
+                                logger.info(f"Carrera ya enviada (omitida): {race_name}")
 
                 current_element = current_element.find_next_sibling()
 
@@ -263,19 +245,8 @@ class ProCyclingAlertBot:
                 for race in today_races:
                     # Nombre de la carrera en BOLD
                     result += f"*{race['race']}*\n"
-
-                    # Ubicación
-                    if race['location']:
-                        result += f"📍 {race['location']}\n"
-
-                    # Podio
-                    result += f"\nPodio:\n\n"
-
-                    for rider in race['podium']:
-                        position_emoji = f"{rider['position']}º"
-                        result += f"{position_emoji} - {rider['rider']}		{rider['time']}\n"
-
-                    result += "\n"
+                    # Ganador
+                    result += f"🏆 {race['winner']}\n\n"
 
                 return result, today_races
             else:
