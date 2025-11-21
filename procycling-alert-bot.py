@@ -207,12 +207,20 @@ class ProCyclingAlertBot:
                         logger.info(f"  LI tiene {len(all_links)} enlaces: {[a.get_text(strip=True)[:30] for a in all_links[:3]]}")
 
                         races_checked += 1
-                        # Necesitamos al menos 1 enlace: la carrera
-                        if len(all_links) >= 1:
-                            # El PRIMER enlace es la CARRERA
-                            race_link = all_links[0]
-                            race_name = race_link.get_text(strip=True)
-                            race_url = race_link['href']
+                        # Buscar el primer enlace con texto (ignorar enlaces vacíos como iconos)
+                        race_link = None
+                        race_name = ""
+                        race_url = ""
+
+                        for link in all_links:
+                            text = link.get_text(strip=True)
+                            if text:  # Primer enlace con texto no vacío
+                                race_link = link
+                                race_name = text
+                                race_url = link.get('href', '')
+                                break
+
+                        if race_link and race_name:
 
                             # Asegurar URL completa
                             if not race_url.startswith('http'):
