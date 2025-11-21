@@ -224,6 +224,9 @@ class ProCyclingAlertBot:
 
                             # Asegurar URL completa
                             if not race_url.startswith('http'):
+                                # Agregar / si no empieza con /
+                                if not race_url.startswith('/'):
+                                    race_url = '/' + race_url
                                 race_url = PROCYCLING_URL + race_url
 
                             # Solo agregar si tiene contenido
