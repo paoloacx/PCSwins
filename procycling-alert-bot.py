@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import logging
 import json
 import hashlib
+import time
 
 # Configuración del logging
 logging.basicConfig(
@@ -155,7 +156,9 @@ class ProCyclingAlertBot:
     def scrape_today_winners(self):
         """Extrae las carreras del día con sus podios completos desde ProCyclingStats"""
         try:
+            logger.info(f"Conectando a {PROCYCLING_URL}...")
             response = requests.get(PROCYCLING_URL, headers=HEADERS, timeout=10)
+            logger.info(f"Status code: {response.status_code}")
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -165,10 +168,14 @@ class ProCyclingAlertBot:
             results_header = soup.find('h3', string='Results today')
 
             if not results_header:
-                logger.info("No se encontró el encabezado 'Results today'")
+                logger.warning("No se encontró el encabezado 'Results today'")
+                # Mostrar algunos encabezados h3 encontrados para debugging
+                all_h3 = soup.find_all('h3')
+                if all_h3:
+                    logger.info(f"Encabezados h3 encontrados: {[h.get_text(strip=True) for h in all_h3[:5]]}")
                 return None, []
 
-            logger.info("Encabezado 'Results today' encontrado")
+            logger.info("✅ Encabezado 'Results today' encontrado")
 
             # Buscar el elemento ul que sigue al encabezado
             current_element = results_header.find_next_sibling()
@@ -203,6 +210,9 @@ class ProCyclingAlertBot:
 
                                 # Solo agregar si no se ha enviado antes
                                 if result_hash not in self.sent_results:
+                                    # Pequeño delay para no sobrecargar el servidor
+                                    time.sleep(1)
+
                                     # Obtener el podio de esta carrera
                                     location, podium = self.scrape_race_podium(race_url)
 
@@ -214,6 +224,8 @@ class ProCyclingAlertBot:
                                             'hash': result_hash
                                         })
                                         logger.info(f"Carrera encontrada: {race_name} con {len(podium)} posiciones")
+                                    else:
+                                        logger.warning(f"No se pudo obtener podio para: {race_name}")
                                 else:
                                     logger.info(f"Carrera ya enviada (omitida): {race_name}")
 
