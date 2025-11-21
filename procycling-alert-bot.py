@@ -209,6 +209,10 @@ class ProCyclingAlertBot:
                         all_texts = [a.get_text(strip=True) for a in all_links]
                         logger.info(f"  LI tiene {len(all_links)} enlaces: {all_texts}")
 
+                        # DEBUG: Mostrar todo el texto del LI para encontrar los tiempos
+                        full_text = item.get_text(separator='|', strip=True)
+                        logger.info(f"  Texto completo del LI: {full_text}")
+
                         races_checked += 1
 
                         # Extraer enlaces con texto (ignorar vacíos como iconos/banderas)
