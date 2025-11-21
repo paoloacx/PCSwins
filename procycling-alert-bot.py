@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from bs4 import BeautifulSoup
 import logging
@@ -219,22 +220,43 @@ class ProCyclingAlertBot:
 
                         # Necesitamos al menos 2 enlaces: carrera y ganador
                         if len(links_with_text) >= 2:
-                            race_name = links_with_text[0]['text']  # Primer enlace = carrera
-                            winner_name = links_with_text[1]['text']  # Segundo enlace = ganador
+                            race_info = links_with_text[0]['text']  # Primer enlace = carrera + ubicación
 
-                            logger.info(f"  -> Carrera: {race_name}, Ganador: {winner_name}")
+                            # Intentar separar nombre de carrera y ubicación
+                            # Buscar patrón donde termina con (CC), (WC), etc. seguido de ubicación
+                            race_name = race_info
+                            location = ""
+
+                            # Buscar patrones comunes de fin de nombre de carrera
+                            match = re.search(r'(\([A-Z]{2,3}\))([A-Z])', race_info)
+                            if match:
+                                split_pos = match.start(2)
+                                race_name = race_info[:split_pos]
+                                location = race_info[split_pos:]
+
+                            # Extraer podio (posiciones 1, 2, 3)
+                            podium = []
+                            for i, pos in enumerate([1, 2, 3]):
+                                if i + 1 < len(links_with_text):
+                                    rider = links_with_text[i + 1]['text']
+                                    # Ignorar "view results"
+                                    if rider.lower() != 'view  results' and rider.lower() != 'view results':
+                                        podium.append(rider)
+
+                            logger.info(f"  -> Carrera: {race_name}, Podio: {podium}")
 
                             # Generar hash único para esta combinación
-                            result_hash = self.generate_result_hash(race_name, winner_name)
+                            result_hash = self.generate_result_hash(race_name, podium[0] if podium else "")
 
                             # Solo agregar si no se ha enviado antes
                             if result_hash not in self.sent_results:
                                 today_races.append({
                                     'race': race_name,
-                                    'winner': winner_name,
+                                    'location': location,
+                                    'podium': podium,
                                     'hash': result_hash
                                 })
-                                logger.info(f"✅ Carrera agregada: {race_name} - Ganador: {winner_name}")
+                                logger.info(f"✅ Carrera agregada: {race_name} - Podio: {podium}")
                             else:
                                 logger.info(f"Carrera ya enviada (omitida): {race_name}")
 
@@ -247,8 +269,20 @@ class ProCyclingAlertBot:
                 for race in today_races:
                     # Nombre de la carrera en BOLD
                     result += f"*{race['race']}*\n"
-                    # Ganador
-                    result += f"🏆 {race['winner']}\n\n"
+
+                    # Ubicación si existe
+                    if race.get('location'):
+                        result += f"📍 {race['location']}\n"
+
+                    result += "\n"
+
+                    # Podio
+                    if race.get('podium'):
+                        positions = ['1º', '2º', '3º']
+                        for i, rider in enumerate(race['podium'][:3]):
+                            result += f"{positions[i]} - {rider}\n"
+
+                    result += "\n"
 
                 return result, today_races
             else:
