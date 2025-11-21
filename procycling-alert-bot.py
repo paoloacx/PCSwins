@@ -238,19 +238,36 @@ class ProCyclingAlertBot:
                                 race_name = race_info[:split_pos]
                                 location = race_info[split_pos:]
 
-                            # Extraer podio (posiciones 1, 2, 3)
+                            # Extraer podio con tiempos del texto completo
+                            # Formato: Carrera|Ubicación|1|Nombre1|Tiempo1|2|Nombre2|Tiempo2|3|Nombre3|Tiempo3|...
+                            full_text = item.get_text(separator='|', strip=True)
+                            parts = full_text.split('|')
+
                             podium = []
-                            for i, pos in enumerate([1, 2, 3]):
-                                if i + 1 < len(links_with_text):
-                                    rider = links_with_text[i + 1]['text']
-                                    # Ignorar "view results"
-                                    if rider.lower() != 'view  results' and rider.lower() != 'view results':
-                                        podium.append(rider)
+                            # Buscar patrón: número de posición seguido de nombre y tiempo
+                            i = 0
+                            while i < len(parts):
+                                if parts[i] in ['1', '2', '3']:
+                                    pos = parts[i]
+                                    if i + 1 < len(parts):
+                                        rider = parts[i + 1]
+                                        time = parts[i + 2] if i + 2 < len(parts) else ""
+                                        # Ignorar si es "view results" o similar
+                                        if rider.lower() not in ['view  results', 'view results', '']:
+                                            podium.append({
+                                                'pos': pos,
+                                                'rider': rider,
+                                                'time': time if time and time != ',,' else ''
+                                            })
+                                        i += 3
+                                        continue
+                                i += 1
 
                             logger.info(f"  -> Carrera: {race_name}, Podio: {podium}")
 
                             # Generar hash único para esta combinación
-                            result_hash = self.generate_result_hash(race_name, podium[0] if podium else "")
+                            first_rider = podium[0]['rider'] if podium else ""
+                            result_hash = self.generate_result_hash(race_name, first_rider)
 
                             # Solo agregar si no se ha enviado antes
                             if result_hash not in self.sent_results:
@@ -280,11 +297,16 @@ class ProCyclingAlertBot:
 
                     result += "\n"
 
-                    # Podio
+                    # Podio con tiempos
                     if race.get('podium'):
-                        positions = ['1º', '2º', '3º']
-                        for i, rider in enumerate(race['podium'][:3]):
-                            result += f"{positions[i]} - {rider}\n"
+                        for rider_info in race['podium'][:3]:
+                            pos = rider_info.get('pos', '?')
+                            rider = rider_info.get('rider', '')
+                            time = rider_info.get('time', '')
+                            if time:
+                                result += f"{pos}º - {rider}  {time}\n"
+                            else:
+                                result += f"{pos}º - {rider}\n"
 
                     result += "\n"
 
