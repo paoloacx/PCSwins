@@ -204,7 +204,9 @@ class ProCyclingAlertBot:
 
                     for item in list_items:
                         all_links = item.find_all('a', href=True)
-                        logger.info(f"  LI tiene {len(all_links)} enlaces: {[a.get_text(strip=True)[:30] for a in all_links[:4]]}")
+                        # Mostrar TODOS los enlaces para debug
+                        all_texts = [a.get_text(strip=True) for a in all_links]
+                        logger.info(f"  LI tiene {len(all_links)} enlaces: {all_texts}")
 
                         races_checked += 1
 
