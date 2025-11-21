@@ -180,19 +180,33 @@ class ProCyclingAlertBot:
             # Buscar el elemento ul que sigue al encabezado
             current_element = results_header.find_next_sibling()
 
+            # DEBUG: Mostrar qué elementos siguen al h3
+            debug_element = results_header.find_next_sibling()
+            elements_found = []
+            for i in range(5):
+                if debug_element:
+                    elements_found.append(f"{debug_element.name}")
+                    debug_element = debug_element.find_next_sibling()
+            logger.info(f"Elementos después de h3: {elements_found}")
+
             # Extraer todas las carreras hasta encontrar el siguiente encabezado o fin de sección
+            races_checked = 0
             while current_element:
                 # Si encontramos otro encabezado h3, terminamos
                 if current_element.name == 'h3':
+                    logger.info(f"Encontrado siguiente h3, terminando. Carreras revisadas: {races_checked}")
                     break
 
                 # Buscar enlaces dentro del elemento actual
                 if current_element.name == 'ul':
                     list_items = current_element.find_all('li')
+                    logger.info(f"Encontrado UL con {len(list_items)} items")
 
                     for item in list_items:
                         all_links = item.find_all('a', href=True)
+                        logger.info(f"  LI tiene {len(all_links)} enlaces: {[a.get_text(strip=True)[:30] for a in all_links[:3]]}")
 
+                        races_checked += 1
                         # Necesitamos al menos 1 enlace: la carrera
                         if len(all_links) >= 1:
                             # El PRIMER enlace es la CARRERA
