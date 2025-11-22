@@ -239,27 +239,54 @@ class ProCyclingAlertBot:
                                 location = race_info[split_pos:]
 
                             # Extraer podio con tiempos del texto completo
-                            # Formato: Carrera|Ubicación|1|Nombre1|Tiempo1|2|Nombre2|Tiempo2|3|Nombre3|Tiempo3|...
+                            # Formato puede variar:
+                            # - Carrera|1|Nombre|Tiempo|2|...
+                            # - Carrera|1|Nombre|Equipo|Tiempo|2|... (con abrev. de equipo como TBV, PGL)
                             full_text = item.get_text(separator='|', strip=True)
                             parts = full_text.split('|')
 
+                            def is_time_format(s):
+                                """Detecta si un string es un tiempo válido (MM:SS, H:MM:SS, -, ,,)"""
+                                if not s:
+                                    return False
+                                if s in ['-', ',,']:
+                                    return True
+                                # Formato tiempo: 1:23, 12:34, 1:23:45, etc.
+                                return bool(re.match(r'^\d{1,2}:\d{2}(:\d{2})?$', s))
+
                             podium = []
-                            # Buscar patrón: número de posición seguido de nombre y tiempo
                             i = 0
                             while i < len(parts):
                                 if parts[i] in ['1', '2', '3']:
                                     pos = parts[i]
                                     if i + 1 < len(parts):
                                         rider = parts[i + 1]
-                                        time = parts[i + 2] if i + 2 < len(parts) else ""
-                                        # Ignorar si es "view results" o similar
+
+                                        # Buscar el tiempo (puede estar en i+2 o i+3 si hay equipo)
+                                        time_val = ""
+                                        next_idx = i + 2
+
+                                        if next_idx < len(parts):
+                                            if is_time_format(parts[next_idx]):
+                                                time_val = parts[next_idx]
+                                                next_idx = i + 3
+                                            elif next_idx + 1 < len(parts) and is_time_format(parts[next_idx + 1]):
+                                                # Hay equipo en i+2, tiempo en i+3
+                                                time_val = parts[next_idx + 1]
+                                                next_idx = i + 4
+                                            else:
+                                                next_idx = i + 3
+
                                         if rider.lower() not in ['view  results', 'view results', '']:
+                                            clean_time = ''
+                                            if time_val and time_val not in ['-', ',,']:
+                                                clean_time = time_val
                                             podium.append({
                                                 'pos': pos,
                                                 'rider': rider,
-                                                'time': time if time and time != ',,' else ''
+                                                'time': clean_time
                                             })
-                                        i += 3
+                                        i = next_idx
                                         continue
                                 i += 1
 
