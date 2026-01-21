@@ -106,8 +106,9 @@ class ProCyclingAlertBot:
         return hashlib.md5(result_str.encode()).hexdigest()
 
     def clean_message(self, message):
-        """Limpia el mensaje eliminando los símbolos < y >"""
-        return message.replace('<', '').replace('>', '')
+        """Limpia el mensaje para evitar conflictos con HTML"""
+        # En HTML mode, necesitamos escapar <, > y &
+        return message.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     
     def send_telegram(self, message):
         """Envía un mensaje a Telegram usando requests"""
@@ -116,12 +117,11 @@ class ProCyclingAlertBot:
             return False
 
         try:
-            cleaned_message = self.clean_message(message)
             url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
             payload = {
                 'chat_id': TELEGRAM_CHAT_ID,
-                'text': cleaned_message,
-                'parse_mode': 'Markdown'
+                'text': message, # Ya no limpiamos aquí porque construimos HTML validado
+                'parse_mode': 'HTML'
             }
             response = requests.post(url, json=payload, timeout=10)
 
@@ -360,25 +360,29 @@ class ProCyclingAlertBot:
                 result = "· ProCycling Alert Bot ·\n\n"
 
                 for race in today_races:
-                    # Nombre de la carrera en BOLD
-                    result += f"*{race['race']}*\n"
+                    # Nombre de la carrera en BOLD (HTML)
+                    clean_race = self.clean_message(race['race'])
+                    result += f"<b>{clean_race}</b>\n"
 
                     # Ubicación si existe
                     if race.get('location'):
-                        result += f"📍 {race['location']}\n"
+                        clean_loc = self.clean_message(race['location'])
+                        result += f"📍 {clean_loc}\n"
 
                     result += "\n"
 
-                    # Podio con tiempos
+                    # Podio con tiempos (OCULTO CON SPOILER)
                     if race.get('podium'):
+                        result += "<tg-spoiler>\n"  # Inicio del spoiler
                         for rider_info in race['podium'][:3]:
                             pos = rider_info.get('pos', '?')
-                            rider = rider_info.get('rider', '')
-                            time = rider_info.get('time', '')
+                            rider = self.clean_message(rider_info.get('rider', ''))
+                            time = self.clean_message(rider_info.get('time', ''))
                             if time:
                                 result += f"{pos}º - {rider}  {time}\n"
                             else:
                                 result += f"{pos}º - {rider}\n"
+                        result += "</tg-spoiler>\n" # Fin del spoiler
 
                     result += "\n"
 
