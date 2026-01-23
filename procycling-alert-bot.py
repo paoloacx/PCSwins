@@ -55,6 +55,7 @@ ALLOWED_CATEGORIES = [
 # Útil para carreras inferiores (ej. 1.1) que queremos incluir explícitamente.
 SPECIFIC_RACES = [
     "Clásica Jaén Paraíso Interior",
+    "Clàssica Camp de Morvedre",
     # Añade aquí otras carreras específicas que quieras permitir
 ]
 
