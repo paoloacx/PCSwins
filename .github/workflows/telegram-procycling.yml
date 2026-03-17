@@ -8,6 +8,8 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout repository
@@ -43,3 +45,6 @@ jobs:
       with:
         path: /tmp/procycling_sent_results.json
         key: procycling-cache-${{ github.run_id }}
+
+    - name: Keepalive Workflow
+      uses: gautamkrishnar/keepalive-workflow@v2
